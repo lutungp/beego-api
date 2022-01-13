@@ -10,7 +10,7 @@ import (
 )
 
 type MPegawai struct {
-	PegawaiId     int64  `orm:"auto"`
+	PegawaiId     int64  `orm:"auto;" json:"-"`
 	PegawaiUuid   string `orm:"size(128)"`
 	PegawaiNo     string `orm:"size(128)"`
 	PegawaiNama   string `orm:"size(128)"`
@@ -36,9 +36,12 @@ func AddPegawai(m *MPegawai) (id int64, err error) {
 func GetPegawaiById(id string) (v *MPegawai, err error) {
 	o := orm.NewOrm()
 	v = &MPegawai{PegawaiUuid: id}
-	if err = o.QueryTable(new(MPegawai)).Filter("PegawaiUuid", id).
+
+	if err = o.QueryTable(new(MPegawai)).
+		Filter("PegawaiUuid", id).
 		RelatedSel().
 		One(v); err == nil {
+
 		return v, nil
 	}
 	return nil, err
