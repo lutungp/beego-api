@@ -2,85 +2,154 @@ package models
 
 import (
 	"errors"
-	"strconv"
-	"time"
+	"fmt"
+	"reflect"
+	"strings"
+
+	"github.com/beego/beego/v2/client/orm"
 )
 
-var (
-	UserList map[string]*User
-)
+type MUsers struct {
+	UserId        int64  `orm:"auto;" json:"-"`
+	UserUuid      string `orm:"size(100)"`
+	UserNoanggota string `orm:"size(100)"`
+	UserNama      string `orm:"size(100)"`
+	UserNotelp    string `orm:"size(50)"`
+	UserEmail     string `orm:"size(50)"`
+}
 
 func init() {
-	UserList = make(map[string]*User)
-	u := User{"user_11111", "astaxie", "11111", Profile{"male", 20, "Singapore", "astaxie@gmail.com"}}
-	UserList["user_11111"] = &u
+	orm.RegisterModel(new(MUsers))
 }
 
-type User struct {
-	Id       string
-	Username string
-	Password string
-	Profile  Profile
+// AddUser insert a new MUsers into database and returns
+// last inserted UserUuid on success.
+func AddUser(m *MUsers) (id int64, err error) {
+	o := orm.NewOrm()
+	id, err = o.Insert(m)
+	return
 }
 
-type Profile struct {
-	Gender  string
-	Age     int
-	Address string
-	Email   string
-}
+// GetUserById retrieves MUsers by UserUuid. Returns error if
+// UserUuid doesn't exist
+func GetUserById(id string) (v *MUsers, err error) {
+	o := orm.NewOrm()
+	v = &MUsers{UserUuid: id}
 
-func AddUser(u User) string {
-	u.Id = "user_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	UserList[u.Id] = &u
-	return u.Id
-}
+	if err = o.QueryTable(new(MUsers)).
+		Filter("UserUuid", id).
+		RelatedSel().
+		One(v); err == nil {
 
-func GetUser(uid string) (u *User, err error) {
-	if u, ok := UserList[uid]; ok {
-		return u, nil
+		return v, nil
 	}
-	return nil, errors.New("User not exists")
+	return nil, err
 }
 
-func GetAllUsers() map[string]*User {
-	return UserList
-}
-
-func UpdateUser(uid string, uu *User) (a *User, err error) {
-	if u, ok := UserList[uid]; ok {
-		if uu.Username != "" {
-			u.Username = uu.Username
-		}
-		if uu.Password != "" {
-			u.Password = uu.Password
-		}
-		if uu.Profile.Age != 0 {
-			u.Profile.Age = uu.Profile.Age
-		}
-		if uu.Profile.Address != "" {
-			u.Profile.Address = uu.Profile.Address
-		}
-		if uu.Profile.Gender != "" {
-			u.Profile.Gender = uu.Profile.Gender
-		}
-		if uu.Profile.Email != "" {
-			u.Profile.Email = uu.Profile.Email
-		}
-		return u, nil
+// GetAllUser retrieves all MUsers matches certain condition. Returns empty list if
+// no records exist
+func GetAllUser(query map[string]string, fields []string, sortby []string, order []string,
+	offset int64, limit int64) (ml []interface{}, err error) {
+	o := orm.NewOrm()
+	qs := o.QueryTable(new(MUsers))
+	// query k=v
+	for k, v := range query {
+		// rewrite dot-notation to Object__Attribute
+		k = strings.Replace(k, ".", "__", -1)
+		qs = qs.Filter(k, v)
 	}
-	return nil, errors.New("User Not Exist")
+	// order by:
+	var sortFields []string
+	if len(sortby) != 0 {
+		if len(sortby) == len(order) {
+			// 1) for each sort field, there is an associated order
+			for i, v := range sortby {
+				orderby := ""
+				if order[i] == "desc" {
+					orderby = "-" + v
+				} else if order[i] == "asc" {
+					orderby = v
+				} else {
+					return nil, errors.New("Error: Invalid order. Must be either [asc|desc]")
+				}
+				sortFields = append(sortFields, orderby)
+			}
+			qs = qs.OrderBy(sortFields...)
+		} else if len(sortby) != len(order) && len(order) == 1 {
+			// 2) there is exactly one order, all the sorted fields will be sorted by this order
+			for _, v := range sortby {
+				orderby := ""
+				if order[0] == "desc" {
+					orderby = "-" + v
+				} else if order[0] == "asc" {
+					orderby = v
+				} else {
+					return nil, errors.New("Error: Invalid order. Must be either [asc|desc]")
+				}
+				sortFields = append(sortFields, orderby)
+			}
+		} else if len(sortby) != len(order) && len(order) != 1 {
+			return nil, errors.New("Error: 'sortby', 'order' sizes mismatch or 'order' size is not 1")
+		}
+	} else {
+		if len(order) != 0 {
+			return nil, errors.New("Error: unused 'order' fields")
+		}
+	}
+
+	var l []MUsers
+	qs = qs.OrderBy(sortFields...).RelatedSel()
+	if _, err = qs.Limit(limit, offset).All(&l, fields...); err == nil {
+		if len(fields) == 0 {
+			for _, v := range l {
+				ml = append(ml, v)
+			}
+		} else {
+			// trim unused fields
+			for _, v := range l {
+				m := make(map[string]interface{})
+				val := reflect.ValueOf(v)
+				for _, fname := range fields {
+					m[fname] = val.FieldByName(fname).Interface()
+				}
+				ml = append(ml, m)
+			}
+		}
+		return ml, nil
+	}
+	return nil, err
+}
+
+// UpdateUser updates MUsers by UserUuid and returns error if
+// the record to be updated doesn't exist
+func UpdateUserById(m *MUsers) (err error) {
+	o := orm.NewOrm()
+	v := MUsers{UserUuid: m.UserUuid}
+	// ascertain id exists in the database
+	if err = o.Read(&v); err == nil {
+		var num int64
+		if num, err = o.Update(m); err == nil {
+			fmt.Println("Number of records updated in database:", num)
+		}
+	}
+	return
+}
+
+// DeleteUser deletes MUsers by UserUuid and returns error if
+// the record to be deleted doesn't exist
+func DeleteUser(id string) (err error) {
+	o := orm.NewOrm()
+	v := MUsers{UserUuid: id}
+	// ascertain id exists in the database
+	if err = o.Read(&v); err == nil {
+		var num int64
+		if num, err = o.Delete(&MUsers{UserUuid: id}); err == nil {
+			fmt.Println("Number of records deleted in database:", num)
+		}
+	}
+	return
 }
 
 func Login(username, password string) bool {
-	for _, u := range UserList {
-		if u.Username == username && u.Password == password {
-			return true
-		}
-	}
-	return false
-}
-
-func DeleteUser(uid string) {
-	delete(UserList, uid)
+	return true
 }
